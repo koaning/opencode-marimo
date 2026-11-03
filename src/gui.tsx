@@ -1,6 +1,6 @@
 import { Plugin } from "@opencode/plugin/gui"
 import { definition } from "./definition"
-import { main } from "./main"
 import { setup } from "./window"
 
-export default Plugin.define({ ...definition, setup, main })
+// Only windows: marimo itself runs in the server part, on whichever machine runs each session's server.
+export default Plugin.define({ ...definition, setup })

@@ -1,19 +1,13 @@
-import { readFileSync } from "node:fs"
 import { Plugin } from "@opencode/plugin"
-import { PUBLISHED_FILE, type Published } from "./published"
+import { Marimo } from "./contract"
+import { acquire, type View } from "./server"
 
-const read = (): Published => {
-  try {
-    return JSON.parse(readFileSync(PUBLISHED_FILE, "utf8"))
-  } catch {
-    return {}
-  }
-}
+const MARKER = "This session owns one marimo notebook:"
 
-const instructions = (b: Published[string]) => {
+const instructions = (b: View) => {
   const url = `http://localhost:${b.port}`
   return [
-    `This session owns one marimo notebook: ${b.notebook}, served at ${url} (currently ${b.status}).`,
+    `${MARKER} ${b.notebook}, served at ${url} (currently ${b.status}).`,
     `When the user talks about "the notebook" or asks you to work in marimo, pair with this server only.`,
     `Do not run discover-servers.sh or look for other marimo servers: other servers on this machine belong to other work.`,
     `Use the marimo-pair skill's execute-code.sh with --url ${url}/. MARIMO_TOKEN is added to the environment automatically`,
@@ -22,26 +16,52 @@ const instructions = (b: Published[string]) => {
     b.status === "running"
       ? `marimo-pair needs the notebook open in an editor; the user has it in OpenCode's side pane.`
       : `It is not running right now: ask the user to start it from the marimo pill above the message box.`,
+    ...(b.studio
+      ? [
+          `The notebook runs with marimo-studio, which turns named notebook results into views (pages, slides, papers)`,
+          `kept in folders beside the notebook. Before building or editing views, run`,
+          `\`uvx --with "${b.studio}" agent-plugins read marimo-studio\` and follow those instructions.`,
+        ]
+      : []),
   ].join(" ")
 }
 
 export default Plugin.define({
   id: "opencode-marimo",
   async setup(ctx) {
+    // One setup per project directory; the manager they share owns the notebooks on this machine.
+    const { manager, release } = acquire(ctx.options)
+
+    // Desktop windows drive the notebooks of this server's sessions, wherever this server runs.
+    const rpc = await ctx.rpc.register(Marimo, {
+      state: async () => manager.state(),
+      notebooks: async ({ directory }) => [...(await manager.notebooks(directory))],
+      bind: (input) => manager.bind(input),
+      start: ({ id }) => manager.start(id),
+      stop: async ({ id }) => (manager.stop(id), {}),
+      unbind: async ({ id }) => (manager.unbind(id), {}),
+      configure: async (settings) => (manager.configure(settings), {}),
+    })
+    const unsubscribe = manager.subscribe((state) => void rpc.events.emit("changed", state).catch(() => undefined))
+
     // Tell the agent which notebook is this session's, every request, so it never has to guess.
     await ctx.session.hook("context", (input) => {
-      const binding = read()[input.sessionID]
-      if (binding) input.system.push({ type: "text", text: instructions(binding) })
+      const binding = manager.view(input.sessionID)
+      if (!binding) return
+      // Every project's instance sees the hook; the first one to answer is enough.
+      if (input.system.some((part) => part.type === "text" && part.text.startsWith(MARKER))) return
+      input.system.push({ type: "text", text: instructions(binding) })
     })
 
     // Authenticate marimo-pair against the session's notebook without the token entering the transcript.
     await ctx.shell.hook("create.before", (input) => {
-      for (const b of Object.values(read())) {
-        if (input.command.includes(`localhost:${b.port}`) || input.command.includes(`127.0.0.1:${b.port}`)) {
-          input.env.MARIMO_TOKEN = b.token
-          return
-        }
-      }
+      const token = manager.tokenFor(input.command)
+      if (token) input.env.MARIMO_TOKEN = token
     })
+
+    return () => {
+      unsubscribe()
+      release()
+    }
   },
 })

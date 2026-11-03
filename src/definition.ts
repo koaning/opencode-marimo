@@ -7,6 +7,16 @@ export const definition = Plugin.define({
       "command.stop": "Stop marimo notebook",
       "command.unbind": "Release marimo notebook",
       "command.new": "New marimo session",
+      "command.settings": "marimo settings",
+      "settings.title": "marimo",
+      "settings.description":
+        "How each session's notebook starts. Changes apply the next time a notebook starts.",
+      "settings.studio": "Use marimo-studio",
+      "settings.studio.description":
+        "Open notebooks with marimo-studio's Notebook and Preview views, for reports, slides and papers.",
+      "settings.version": "marimo-studio version",
+      "settings.version.description":
+        "Empty for the latest. Studio is experimental, so pin one: 0.4.1 or marimo-studio==0.4.1.",
       "button.open": "marimo",
       "folder.title": "Pick a folder for the new session",
       "folder.placeholder": "Search projects",
@@ -25,6 +35,10 @@ export const definition = Plugin.define({
       nosession:
         "Send a message first: marimo binds to a session once it exists",
       noserver: "No OpenCode server is connected",
+      unavailable: "marimo isn't set up on {{server}}",
+      "unavailable.description":
+        "Notebooks run on the machine that runs the session. Add opencode-marimo to the plugins in that machine's opencode.json, with marimo or uv installed there.",
+      nopane: "Open the session's browser pane to see its notebook: it runs on the session's machine",
       failed: "marimo failed to start",
       "connect.text": [
         "Use the /marimo-pair skill to pair-program on a running marimo notebook.",

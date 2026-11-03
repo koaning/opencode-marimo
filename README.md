@@ -5,7 +5,8 @@ Some small utilities to give every OpenCode session its own live [marimo](https:
 ![OpenCode chat on the left, the session's marimo notebook on the right](docs/images/session.png)
 
 The agent pairs with the running kernel through the [marimo-pair](https://github.com/marimo-team/marimo-pair) skill,
-so it runs cells and installs packages (sandboxed with uv) while you use the same notebook.
+so it runs cells and installs packages (sandboxed with uv) while you use the same notebook. We also bind notebooks to 
+individual sessions, so you can rest easy that only one agent is working on a notebook at the same time. 
 
 ## Usage
 

@@ -6,14 +6,23 @@ import {
   type Plugin,
   type SelectOption,
   type ServerRef,
+  SettingsPage,
 } from "@opencode/plugin/gui";
 import { Browser } from "@opencode/plugin/gui/browser";
-import { createEffect, createSignal } from "solid-js";
-import { Binding as BindingSchema, Marimo } from "./contract";
+import { createEffect, createSignal, Show, type JSX } from "solid-js";
+import {
+  Binding as BindingSchema,
+  Marimo,
+  Settings as SettingsSchema,
+  State as StateSchema,
+} from "./contract";
 import { MarimoLogo } from "./logo";
 import type { definition } from "./definition";
 
 type Binding = (typeof BindingSchema)["Type"];
+type Settings = (typeof SettingsSchema)["Type"];
+type State = (typeof StateSchema)["Type"];
+type Client = ServerRef["client"];
 
 const DOT = {
   running: "#1c9a5b",
@@ -25,26 +34,87 @@ type Choice = { readonly name: string; readonly create: boolean } | "new";
 
 export const setup: Plugin.Setup<typeof definition> = (ctx) => {
   const browser = ctx.use(Browser);
-  let client: ReturnType<typeof ctx.main<typeof Marimo.spec>> | undefined;
-  const marimo = () => (client ??= ctx.main(Marimo));
 
-  const key = (session: MountedSession) => ({
-    server: session.server.id,
-    id: session.id,
+  // Each server runs its own notebooks: its plugin part answers for its sessions, here or over SSH. Its state, or
+  // "unavailable" when that server doesn't run this plugin, by `ServerRef.id`.
+  const [states, setStates] = createSignal<
+    Readonly<Record<string, State | "unavailable">>
+  >({});
+  const followed = new Map<
+    string,
+    { client: Client; stop: AbortController; offline?: boolean }
+  >();
+  const api = (server: ServerRef) => server.client.rpc(Marimo);
+  // Calls about a session go to its project's instance of the plugin.
+  const at = (session: MountedSession) => ({
+    location: { directory: session.directory },
   });
-  const bindingOf = (session: MountedSession | undefined) => {
-    if (!session) return undefined;
-    try {
-      return marimo()
-        .state()
-        ?.bindings.find(
-          (b) => b.server === session.server.id && b.id === session.id,
-        );
-    } catch (error) {
-      console.error("[opencode-marimo] ipc unavailable", { id: ctx.id, error });
-      return undefined;
-    }
+
+  const put = (server: ServerRef, value: State | "unavailable") => {
+    if (followed.get(server.id)?.client === server.client)
+      setStates((all) => ({ ...all, [server.id]: value }));
   };
+  // Asks the server again. "unavailable" is only what it said last time: its plugin may have loaded since.
+  const refresh = (server: ServerRef) =>
+    api(server)
+      .state({})
+      .then(
+        (state) => put(server, state),
+        (error) => {
+          console.warn("[opencode-marimo] no marimo on server", {
+            server: server.name,
+            error: String(error),
+          });
+          put(server, "unavailable");
+        },
+      );
+
+  const follow = (server: ServerRef) => {
+    const known = followed.get(server.id);
+    if (known?.client === server.client) {
+      // Back from a dropped connection: it may have missed changes, or restarted its plugin.
+      if (known.offline) {
+        known.offline = false;
+        void refresh(server);
+      }
+      return;
+    }
+    // A restarted server comes with a new client: follow that one instead.
+    known?.stop.abort();
+    const stop = new AbortController();
+    followed.set(server.id, { client: server.client, stop });
+    api(server).events.on("changed", (event) => put(server, event.data), {
+      signal: stop.signal,
+    });
+    void refresh(server);
+  };
+  createEffect(() => {
+    for (const id of ctx.servers.list()) {
+      const server = ctx.servers.get(id);
+      if (!server) continue;
+      if (server.connected && server.compatible) follow(server);
+      else {
+        const known = followed.get(id);
+        if (known) known.offline = true;
+      }
+    }
+  });
+  ctx.signal.addEventListener("abort", () => {
+    for (const { stop } of followed.values()) stop.abort();
+  });
+
+  const stateOf = (server: ServerRef | undefined) => {
+    const state = server && states()[server.id];
+    return state === "unavailable" ? undefined : state;
+  };
+  const unavailable = (server: ServerRef) =>
+    states()[server.id] === "unavailable";
+  const bindingOf = (session: MountedSession | undefined) =>
+    session &&
+    stateOf(session.server)?.bindings.find((b) => b.id === session.id);
+  // Settings → marimo edits the notebooks this app's own server runs.
+  const settings = (): Settings =>
+    stateOf(localServer())?.settings ?? { studio: false, requirement: "" };
   const current = () => ctx.sessions.current();
   const fileName = (path: string) => path.split("/").pop() ?? path;
   // Sessions "New marimo session" created, by `SessionRef.key`, until their tab mounts.
@@ -56,16 +126,26 @@ export const setup: Plugin.Setup<typeof definition> = (ctx) => {
   const changed = () => setRevision((value) => value + 1);
   let creating = false;
 
+  // The pane reaches a notebook on the session's machine; the system browser only reaches one on this machine.
   const show = (url: string, session: MountedSession) => {
     const live = browser();
-    if (live.status === "active" && live.value.canOpen(session, url))
-      live.value.open(session, url);
-    else ctx.system.openExternal(url);
+    // `canOpen` only says yes for this app's own server (it vets workspace files); a remote session's pane still
+    // opens URLs, and loads localhost from the session's machine.
+    const pane =
+      live.status === "active" &&
+      (live.value.canOpen(session, url) ||
+        (!session.server.local && live.value.attached(session)));
+    if (pane) live.value.open(session, url);
+    else if (session.server.local) ctx.system.openExternal(url);
+    else ctx.toast.show({ variant: "error", title: ctx.t("nopane") });
   };
 
   // First use in a session: pick one of the folder's notebooks or create one. The session then owns it.
-  const choose = async (directory: string) => {
-    const notebooks = await marimo().notebooks(directory);
+  const choose = async (server: ServerRef, directory: string) => {
+    const notebooks = await api(server).notebooks(
+      { directory },
+      { location: { directory } },
+    );
     const choice = await ctx.dialogs.select<Choice>({
       title: ctx.t("choose.title"),
       placeholder: ctx.t("choose.placeholder"),
@@ -91,9 +171,12 @@ export const setup: Plugin.Setup<typeof definition> = (ctx) => {
   // holds it, offer to move it here (that session's marimo stops) or to go there. Resolves with the notebook's name,
   // or undefined when the user did neither.
   const claim = async (
-    input: Parameters<ReturnType<typeof marimo>["bind"]>[0],
+    server: ServerRef,
+    input: { id: string; directory: string; name: string; create: boolean },
   ) => {
-    const { owner, name } = await marimo().bind(input);
+    const rpc = api(server);
+    const location = { location: { directory: input.directory } };
+    const { owner, name } = await rpc.bind(input, location);
     if (!owner) return name;
     const action = await ctx.dialogs.select<"move" | "go">({
       title: ctx.t("owned.title", { name }),
@@ -106,19 +189,20 @@ export const setup: Plugin.Setup<typeof definition> = (ctx) => {
         { title: ctx.t("owned.go"), value: "go" },
       ],
     });
-    if (action === "go") ctx.tabs.open(owner, { focus: true });
+    if (action === "go")
+      ctx.tabs.open({ server: server.id, id: owner }, { focus: true });
     if (action !== "move") return undefined;
-    await marimo().unbind(owner);
-    const again = await marimo().bind(input);
+    await rpc.unbind({ id: owner }, location);
+    const again = await rpc.bind(input, location);
     // Another session took it in between: leave it to the user.
     return again.owner ? undefined : again.name;
   };
 
   const bind = async (session: MountedSession) => {
-    const choice = await choose(session.directory);
+    const choice = await choose(session.server, session.directory);
     if (!choice) return false;
-    const name = await claim({
-      ...key(session),
+    const name = await claim(session.server, {
+      id: session.id,
       directory: session.directory,
       ...choice,
     });
@@ -165,10 +249,22 @@ export const setup: Plugin.Setup<typeof definition> = (ctx) => {
       ctx.toast.show({ title: ctx.t("nosession") });
       return;
     }
+    if (unavailable(session.server)) await refresh(session.server);
+    if (unavailable(session.server)) {
+      ctx.toast.show({
+        variant: "error",
+        title: ctx.t("unavailable", { server: session.server.name }),
+        description: ctx.t("unavailable.description"),
+      });
+      return;
+    }
     try {
       if (!bindingOf(session) && !(await bind(session))) return;
       const wasRunning = bindingOf(session)?.status === "running";
-      const url = await marimo().start(key(session));
+      const url = await api(session.server).start(
+        { id: session.id },
+        at(session),
+      );
       show(url, session);
       if (!wasRunning) await connect(session, url);
     } catch (error) {
@@ -232,7 +328,7 @@ export const setup: Plugin.Setup<typeof definition> = (ctx) => {
     }
     const directory = await chooseFolder(server);
     if (!directory) return;
-    const choice = await choose(directory);
+    const choice = await choose(server, directory);
     if (!choice) return;
 
     creating = true;
@@ -243,7 +339,11 @@ export const setup: Plugin.Setup<typeof definition> = (ctx) => {
         location: { directory },
       });
       created = { server: server.id, id: session.id };
-      const name = await claim({ ...created, directory, ...choice });
+      const name = await claim(server, {
+        id: session.id,
+        directory,
+        ...choice,
+      });
       if (!name) {
         created = undefined;
         await server.client.session.remove({ sessionID: session.id });
@@ -255,17 +355,20 @@ export const setup: Plugin.Setup<typeof definition> = (ctx) => {
       changed();
       ctx.tabs.open(created, { focus: true });
       opened = true;
-      entry.url = await marimo().start(created);
+      entry.url = await api(server).start(
+        { id: session.id },
+        { location: { directory } },
+      );
       changed();
     } catch (error) {
       // Before its tab opens, a half-made session is clutter: drop it. After, the session's pill can retry.
       if (created && !opened) {
-        const key = created;
-        await marimo()
-          .unbind(key)
+        const id = created.id;
+        await api(server)
+          .unbind({ id }, { location: { directory } })
           .catch(() => undefined);
         await server.client.session
-          .remove({ sessionID: key.id })
+          .remove({ sessionID: id })
           .catch(() => undefined);
       }
       ctx.toast.show({
@@ -329,7 +432,7 @@ export const setup: Plugin.Setup<typeof definition> = (ctx) => {
     enabled: bindingOf(current())?.status === "running",
     run: () => {
       const session = current();
-      if (session) void marimo().stop(key(session));
+      if (session) void api(session.server).stop({ id: session.id }, at(session));
     },
   }));
 
@@ -340,9 +443,94 @@ export const setup: Plugin.Setup<typeof definition> = (ctx) => {
     enabled: !!bindingOf(current()),
     run: () => {
       const session = current();
-      if (session) void marimo().unbind(key(session));
+      if (session)
+        void api(session.server).unbind({ id: session.id }, at(session));
     },
   }));
+
+  ctx.add(Command, (): Command => ({
+    id: "settings",
+    title: ctx.t("command.settings"),
+    keywords: "marimo notebook studio settings preferences",
+    run: () => ctx.layout.settings("opencode-marimo"),
+  }));
+
+  // Its own page in Settings, so `layout.settings` can open it. main owns the value, so every window shows the same.
+  ctx.add(SettingsPage, {
+    id: "opencode-marimo",
+    icon: "flask",
+    title: ctx.t("settings.title"),
+    entries: [
+      {
+        id: "opencode-marimo",
+        title: ctx.t("settings.title"),
+        keywords: "marimo notebook python",
+      },
+      {
+        id: "marimo-studio",
+        title: ctx.t("settings.studio"),
+        description: ctx.t("settings.studio.description"),
+        keywords: "marimo studio views preview reports slides",
+      },
+    ],
+    render: () => {
+      // What the user typed, so IPC round trips on every keystroke can't move the caret. Until then, the saved value.
+      const [draft, setDraft] = createSignal<string>();
+      const configure = (next: Partial<Settings>) => {
+        const server = localServer();
+        if (server) void api(server).configure({ ...settings(), ...next });
+      };
+      return (
+        <>
+          <div class="settings-tab-header">
+            <div class="settings-tab-header-row">
+              <div class="flex flex-col gap-1">
+                <h2 class="settings-tab-title">{ctx.t("settings.title")}</h2>
+                <span class="text-11-regular text-v2-text-text-muted">
+                  {ctx.t("settings.description")}
+                </span>
+              </div>
+            </div>
+          </div>
+          <div class="settings-tab-body settings-tab-body--sectioned">
+            <section class="settings-section" aria-label={ctx.t("settings.title")}>
+              <div data-component="settings-list">
+                <div data-action="marimo-studio">
+                  <Row
+                    title={ctx.t("settings.studio")}
+                    description={ctx.t("settings.studio.description")}
+                  >
+                    <ctx.ui.Switch
+                      label={ctx.t("settings.studio")}
+                      hideLabel
+                      checked={settings().studio}
+                      onChange={(studio) => configure({ studio })}
+                    />
+                  </Row>
+                </div>
+                <Show when={settings().studio}>
+                  <Row
+                    title={ctx.t("settings.version")}
+                    description={ctx.t("settings.version.description")}
+                  >
+                    <ctx.ui.TextInput
+                      label={ctx.t("settings.version")}
+                      placeholder="marimo-studio"
+                      value={draft() ?? settings().requirement}
+                      onInput={(requirement) => {
+                        setDraft(requirement);
+                        configure({ requirement });
+                      }}
+                    />
+                  </Row>
+                </Show>
+              </div>
+            </section>
+          </div>
+        </>
+      );
+    },
+  });
 
   const statusLabel = (binding: Binding) =>
     `${fileName(binding.name)} · ${ctx.t(`status.${binding.status}`)}`;
@@ -350,7 +538,10 @@ export const setup: Plugin.Setup<typeof definition> = (ctx) => {
   // Starts the notebook if needed and asks the agent to connect to it.
   const pairAgent = async (session: MountedSession) => {
     try {
-      await connect(session, await marimo().start(key(session)));
+      await connect(
+        session,
+        await api(session.server).start({ id: session.id }, at(session)),
+      );
     } catch (error) {
       ctx.toast.show({
         variant: "error",
@@ -365,6 +556,13 @@ export const setup: Plugin.Setup<typeof definition> = (ctx) => {
     id: "marimo",
     show: (input) => {
       const session = input.session;
+      if (unavailable(session.server))
+        return {
+          label: ctx.t("button.open"),
+          icon: "flask",
+          title: ctx.t("unavailable", { server: session.server.name }),
+          run: () => void open(session),
+        };
       const binding = bindingOf(session);
       if (!binding)
         return {
@@ -402,7 +600,11 @@ export const setup: Plugin.Setup<typeof definition> = (ctx) => {
                   id: "stop",
                   label: ctx.t("command.stop"),
                   icon: "stop" as const,
-                  run: () => void marimo().stop(key(session)),
+                  run: () =>
+                    void api(session.server).stop(
+                      { id: session.id },
+                      at(session),
+                    ),
                 },
               ]
             : []),
@@ -410,7 +612,11 @@ export const setup: Plugin.Setup<typeof definition> = (ctx) => {
             id: "release",
             label: ctx.t("command.unbind"),
             icon: "close" as const,
-            run: () => void marimo().unbind(key(session)),
+            run: () =>
+              void api(session.server).unbind(
+                { id: session.id },
+                at(session),
+              ),
           },
         ],
       };
@@ -459,3 +665,20 @@ export const setup: Plugin.Setup<typeof definition> = (ctx) => {
     },
   });
 };
+
+// The host's settings row markup; its stylesheet is loaded with the settings screen.
+function Row(props: {
+  title: string;
+  description: string;
+  children: JSX.Element;
+}) {
+  return (
+    <div data-component="settings-row">
+      <div data-slot="settings-row-copy">
+        <div data-slot="settings-row-title">{props.title}</div>
+        <div data-slot="settings-row-description">{props.description}</div>
+      </div>
+      <div data-slot="settings-row-control">{props.children}</div>
+    </div>
+  );
+}

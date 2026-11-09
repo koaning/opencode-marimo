@@ -3,6 +3,8 @@ import { Marimo } from "./contract"
 import { acquire, type View } from "./server"
 
 const MARKER = "This session owns one marimo notebook:"
+// What `session.get` rejects with for a session that doesn't exist: the in-process tag, and the HTTP client's.
+const MISSING = new Set(["Session.NotFoundError", "SessionNotFoundError"])
 
 const instructions = (b: View) => {
   const url = `http://localhost:${b.port}`
@@ -59,7 +61,30 @@ export default Plugin.define({
       if (token) input.env.MARIMO_TOKEN = token
     })
 
+    // A deleted session releases its notebook and port; an archived one stops its marimo but keeps the notebook.
+    const events = new AbortController()
+    void (async () => {
+      for await (const event of ctx.event.subscribe({
+        types: ["session.deleted", "session.archived"],
+        signal: events.signal,
+      })) {
+        if (event.type === "session.deleted") manager.forget(event.data.sessionID)
+        if (event.type === "session.archived") manager.archive(event.data.sessionID)
+      }
+    })().catch((error) => {
+      if (!events.signal.aborted) console.error("[opencode-marimo] session events stopped", error)
+    })
+
+    // Sessions deleted while this server was down. Only "not found" counts as gone: a failed lookup keeps the binding.
+    void manager.prune((id) =>
+      ctx.session.get({ sessionID: id as never }).then(
+        () => true,
+        (error) => (MISSING.has((error as { _tag?: string } | null)?._tag ?? "") ? false : undefined),
+      ),
+    )
+
     return () => {
+      events.abort()
       unsubscribe()
       release()
     }

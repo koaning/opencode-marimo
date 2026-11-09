@@ -1,7 +1,19 @@
 {
   "name": "opencode-marimo",
   "version": "0.1.0",
-  "private": true,
+  "description": "Give every OpenCode session its own live marimo notebook",
+  "license": "Apache-2.0",
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "marimo",
+    "notebook"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/koaning/opencode-marimo.git"
+  },
+  "homepage": "https://github.com/koaning/opencode-marimo#readme",
   "type": "module",
   "files": [
     "src",
@@ -14,7 +26,8 @@
   "scripts": {
     "build": "vite build",
     "dev": "vite build --watch",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "bun run build"
   },
   "dependencies": {
     "@opencode/plugin": "2.2.5"

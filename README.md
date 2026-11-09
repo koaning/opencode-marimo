@@ -18,20 +18,23 @@ individual sessions, so you can rest easy that only one agent is working on a no
 Requires OpenCode Desktop 2.2.5+ and [uv](https://docs.astral.sh/uv/). [marimo](https://docs.marimo.io/getting_started/installation/)
 is used when it's installed; otherwise notebooks run through `uvx marimo`.
 
+Install the marimo-pair skill so the agent can pair with the notebook:
+
 ```sh
 npx skills add marimo-team/marimo-pair
-bun install && bun run build
 ```
 
 Add the plugin to `~/.config/opencode/opencode.json` and restart OpenCode Desktop:
 
 ```jsonc
 {
-  "plugins": [{ "package": "/path/to/opencode-marimo", "options": { "command": "marimo" } }],
+  "plugins": [{ "package": "opencode-marimo", "options": { "command": "marimo" } }],
 }
 ```
 
 `command` is optional: an absolute path to marimo if it isn't on a standard path.
+
+To run from a checkout instead, `bun install && bun run build` in the repo and point `"package"` at its path.
 
 ### Remote sessions (SSH)
 

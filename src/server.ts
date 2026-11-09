@@ -25,6 +25,8 @@ interface Running {
   up: boolean
   /** The marimo-studio requirement it was started with, or null. */
   studio: string | null
+  /** When an editor was last seen connected (or it started). */
+  seen: number
 }
 
 /** What the agent half reads about a session's notebook. */
@@ -80,10 +82,15 @@ const onPath = (name: string) =>
       }
     })
 
-// `studio: true` or a requirement such as "marimo-studio==0.4.2" in opencode.json, until the user changes it in Settings.
-const settingsFrom = (studio: unknown): Settings => ({
-  studio: studio === true || (typeof studio === "string" && studio !== ""),
-  requirement: typeof studio === "string" ? studio : "",
+const IDLE_MINUTES = 30
+const REAP_EVERY = 60_000
+
+// `studio: true` or a requirement such as "marimo-studio==0.4.2", and `idle` minutes, in opencode.json, until the user
+// changes them in Settings.
+const settingsFrom = (options: Record<string, unknown>): Settings => ({
+  studio: options.studio === true || (typeof options.studio === "string" && options.studio !== ""),
+  requirement: typeof options.studio === "string" ? options.studio : "",
+  idle: typeof options.idle === "number" && options.idle >= 0 ? options.idle : IDLE_MINUTES,
 })
 
 // Empty means the latest; a bare version such as "0.4.2" pins it.
@@ -125,6 +132,18 @@ async function findNotebooks(directory: string, depth = 3): Promise<string[]> {
   return found.sort()
 }
 
+// How many editors have the notebook open, or undefined when marimo doesn't say.
+const editors = (b: Stored) =>
+  fetch(`http://127.0.0.1:${b.port}/api/status/connections`, {
+    headers: { authorization: `Bearer ${b.token}` },
+    signal: AbortSignal.timeout(5000),
+  })
+    .then((res) => (res.ok ? res.json() : undefined))
+    .then(
+      (body) => (typeof body?.active === "number" ? (body.active as number) : undefined),
+      () => undefined,
+    )
+
 const kill = (it: Running) => {
   try {
     if (it.proc.pid) process.kill(-it.proc.pid, "SIGTERM")
@@ -134,14 +153,16 @@ const kill = (it: Running) => {
 }
 
 function load(options: Record<string, unknown>) {
+  const defaults = settingsFrom(options)
   try {
     const saved = JSON.parse(readFileSync(STATE_FILE, "utf8"))
     return {
       bindings: (saved.bindings ?? {}) as Record<string, Stored>,
-      settings: (saved.settings ?? settingsFrom(options.studio)) as Settings,
+      // Saved settings win, but settings added since they were saved keep their defaults.
+      settings: { ...defaults, ...saved.settings } as Settings,
     }
   } catch {
-    return { bindings: {} as Record<string, Stored>, settings: settingsFrom(options.studio) }
+    return { bindings: {} as Record<string, Stored>, settings: defaults }
   }
 }
 
@@ -209,6 +230,36 @@ function createManager(options: Record<string, unknown>) {
   }
   // A server that exits without cleaning up must not leave its notebooks behind.
   process.once("exit", stopAll)
+
+  const stop = (id: string) => {
+    const it = running.get(id)
+    if (it) kill(it)
+  }
+  // Every project's instance hears the same session events, so releasing twice must be harmless.
+  const unbind = (id: string) => {
+    if (!bindings[id]) return
+    stop(id)
+    save(id, undefined)
+    changed()
+  }
+  let pruned = false
+
+  // marimo's own --timeout only counts HTTP requests, so it would stop a notebook that is open but quiet. Ask each one
+  // how many editors are connected instead, and stop it after `idle` minutes without any. Polls even when idle is 0, so
+  // turning it on doesn't stop notebooks that were in use all along.
+  const reap = async () => {
+    for (const [id, it] of [...running]) {
+      const binding = bindings[id]
+      if (!it.up || !binding) continue
+      if ((await editors(binding)) !== 0) it.seen = Date.now()
+      else if (settings.idle > 0 && Date.now() - it.seen >= settings.idle * 60_000) {
+        console.info("[opencode-marimo] stopping idle notebook", { id, notebook: binding.notebook })
+        kill(it)
+      }
+    }
+  }
+  const reaper = setInterval(() => void reap(), REAP_EVERY)
+  reaper.unref()
 
   return {
     state,
@@ -303,7 +354,7 @@ function createManager(options: Record<string, unknown>) {
         proc.on("error", fail)
         proc.on("exit", (code) => fail(new Error(`marimo exited (${code}): ${output.trim().slice(-500)}`)))
       })
-      const it: Running = { proc, ready, up: false, studio }
+      const it: Running = { proc, ready, up: false, studio, seen: Date.now() }
       running.set(id, it)
       changed()
 
@@ -315,6 +366,7 @@ function createManager(options: Record<string, unknown>) {
       it.ready.then(
         () => {
           it.up = true
+          it.seen = Date.now()
           changed()
         },
         (error) => {
@@ -327,16 +379,20 @@ function createManager(options: Record<string, unknown>) {
       return it.ready
     },
 
-    stop: (id: string) => {
-      const it = running.get(id)
-      if (it) kill(it)
-    },
+    stop,
 
-    unbind: (id: string) => {
-      const it = running.get(id)
-      if (it) kill(it)
-      save(id, undefined)
-      changed()
+    unbind,
+
+    /** A deleted session lets go of its notebook and port. */
+    forget: unbind,
+    /** An archived session can come back, so it keeps its notebook; only its marimo stops. */
+    archive: stop,
+
+    /** Once per manager: forget bindings of sessions deleted while this server was down. `undefined` means unknown. */
+    prune: async (exists: (id: string) => Promise<boolean | undefined>) => {
+      if (pruned) return
+      pruned = true
+      for (const id of Object.keys(bindings)) if ((await exists(id)) === false) unbind(id)
     },
 
     configure: (next: Settings) => {
@@ -354,6 +410,7 @@ function createManager(options: Record<string, unknown>) {
     /** The last plugin instance going away (a reload or shutdown) stops every notebook. */
     release: () => {
       if (--users > 0) return false
+      clearInterval(reaper)
       stopAll()
       process.off("exit", stopAll)
       return true

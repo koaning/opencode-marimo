@@ -114,7 +114,7 @@ export const setup: Plugin.Setup<typeof definition> = (ctx) => {
     stateOf(session.server)?.bindings.find((b) => b.id === session.id);
   // Settings → marimo edits the notebooks this app's own server runs.
   const settings = (): Settings =>
-    stateOf(localServer())?.settings ?? { studio: false, requirement: "" };
+    stateOf(localServer())?.settings ?? { studio: false, requirement: "", idle: 30 };
   const current = () => ctx.sessions.current();
   const fileName = (path: string) => path.split("/").pop() ?? path;
   // Sessions "New marimo session" created, by `SessionRef.key`, until their tab mounts.
@@ -476,6 +476,7 @@ export const setup: Plugin.Setup<typeof definition> = (ctx) => {
     render: () => {
       // What the user typed, so IPC round trips on every keystroke can't move the caret. Until then, the saved value.
       const [draft, setDraft] = createSignal<string>();
+      const [idleDraft, setIdleDraft] = createSignal<string>();
       const configure = (next: Partial<Settings>) => {
         const server = localServer();
         if (server) void api(server).configure({ ...settings(), ...next });
@@ -524,6 +525,22 @@ export const setup: Plugin.Setup<typeof definition> = (ctx) => {
                     />
                   </Row>
                 </Show>
+                <Row
+                  title={ctx.t("settings.idle")}
+                  description={ctx.t("settings.idle.description")}
+                >
+                  <ctx.ui.TextInput
+                    label={ctx.t("settings.idle")}
+                    placeholder="30"
+                    value={idleDraft() ?? String(settings().idle)}
+                    onInput={(value) => {
+                      setIdleDraft(value);
+                      // Whole minutes; anything else waits until the field holds one.
+                      if (/^\d+$/.test(value.trim()))
+                        configure({ idle: Number(value.trim()) });
+                    }}
+                  />
+                </Row>
               </div>
             </section>
           </div>

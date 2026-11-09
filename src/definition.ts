@@ -17,6 +17,9 @@ export const definition = Plugin.define({
       "settings.version": "marimo-studio version",
       "settings.version.description":
         "Empty for the latest. Studio is experimental, so pin one: 0.4.1 or marimo-studio==0.4.1.",
+      "settings.idle": "Stop idle notebooks after (minutes)",
+      "settings.idle.description":
+        "A notebook with no editor open shuts down after this many minutes, freeing its kernel. Applies right away; 0 keeps notebooks running.",
       "button.open": "marimo",
       "folder.title": "Pick a folder for the new session",
       "folder.placeholder": "Search projects",

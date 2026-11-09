@@ -11,6 +11,8 @@ export const Settings = Schema.Struct({
   studio: Schema.Boolean,
   /** The marimo-studio requirement uv installs, e.g. `marimo-studio==0.4.2`. Empty means the latest. */
   requirement: Schema.String,
+  /** Minutes with no editor connected before marimo shuts a notebook down; 0 keeps it running. */
+  idle: Schema.Number,
 })
 
 /** The one notebook a session owns, with the one port (and URL) it is served on, on the session's server. */

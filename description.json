@@ -1,0 +1,16 @@
+{
+  "productId": "opencode-marimo",
+  "type": "plugin",
+  "displayName": "marimo for OpenCode",
+  "description": "Gives every OpenCode session its own live marimo notebook in a side pane. The agent pairs with the running kernel through the marimo-pair skill, so it runs cells and installs packages (sandboxed with uv) while you use the same notebook. Each notebook is bound to one session, so only one agent works on it at a time. Works for remote (SSH) sessions too, and supports marimo-studio for building reports, slides and papers from your results.",
+  "repoUrl": "https://github.com/koaning/opencode-marimo",
+  "homepageUrl": "https://github.com/koaning/opencode-marimo#readme",
+  "tags": [
+    "marimo",
+    "notebook",
+    "python",
+    "data-science",
+    "desktop"
+  ],
+  "installation": "## Installation\n\nRequires OpenCode Desktop 2.2.5+ and [uv](https://docs.astral.sh/uv/). If [marimo](https://docs.marimo.io/getting_started/installation/) is installed it is used; otherwise notebooks run through `uvx marimo`.\n\nInstall the marimo-pair skill so the agent can pair with the notebook:\n\n```sh\nnpx skills add marimo-team/marimo-pair\n```\n\nAdd the plugin to `~/.config/opencode/opencode.json` and restart OpenCode Desktop:\n\n```jsonc\n{\n  \"plugins\": [{ \"package\": \"opencode-marimo\" }]\n}\n```\n\nOptionally pass `\"options\": { \"command\": \"/path/to/marimo\" }` if marimo isn't on a standard path.\n\n## Usage\n\n- Cmd+K → **New marimo session**\n- or click **marimo** in the session header, or type `/marimo` in any session\n"
+}

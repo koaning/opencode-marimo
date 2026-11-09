@@ -1,6 +1,5 @@
 import {
   Command,
-  ComposerPill,
   Slot,
   type MountedSession,
   type Plugin,
@@ -23,12 +22,6 @@ type Binding = (typeof BindingSchema)["Type"];
 type Settings = (typeof SettingsSchema)["Type"];
 type State = (typeof StateSchema)["Type"];
 type Client = ServerRef["client"];
-
-const DOT = {
-  running: "#1c9a5b",
-  starting: "#d4a017",
-  stopped: "#8a8a8a",
-} as const;
 
 type Choice = { readonly name: string; readonly create: boolean } | "new";
 
@@ -568,116 +561,80 @@ export const setup: Plugin.Setup<typeof definition> = (ctx) => {
     }
   };
 
-  // A pill above every session's composer: status at a glance, and the notebook's actions.
-  ctx.add(ComposerPill, {
-    id: "marimo",
-    show: (input) => {
-      const session = input.session;
-      if (unavailable(session.server))
-        return {
-          label: ctx.t("button.open"),
-          icon: "flask",
-          title: ctx.t("unavailable", { server: session.server.name }),
-          run: () => void open(session),
-        };
-      const binding = bindingOf(session);
-      if (!binding)
-        return {
-          label: ctx.t("button.open"),
-          icon: "flask",
-          title: ctx.t("pill.start"),
-          run: () => void open(session),
-        };
-      const running = binding.status === "running";
-      return {
-        label: statusLabel(binding),
-        icon: running ? "status-active" : "flask",
-        tone: running
-          ? "success"
-          : binding.status === "starting"
-            ? "warning"
-            : undefined,
-        title: binding.name,
-        rows: [
-          {
-            id: "show",
-            label: ctx.t(running ? "pill.show" : "pill.startShow"),
-            icon: "globe",
-            run: () => void open(session),
-          },
-          {
-            id: "pair",
-            label: ctx.t("pill.pair"),
-            icon: "link",
-            run: () => void pairAgent(session),
-          },
-          ...(running
-            ? [
-                {
-                  id: "stop",
-                  label: ctx.t("command.stop"),
-                  icon: "stop" as const,
-                  run: () =>
-                    void api(session.server).stop(
-                      { id: session.id },
-                      at(session),
-                    ),
-                },
-              ]
-            : []),
-          {
-            id: "release",
-            label: ctx.t("command.unbind"),
-            icon: "close" as const,
-            run: () =>
-              void api(session.server).unbind(
-                { id: session.id },
-                at(session),
-              ),
-          },
-        ],
-      };
-    },
-  });
-
-  // A button in every session's header, bound to that session and its notebook, with a status dot.
+  // The session header is the notebook's single control: it opens the picker before binding, then owns every action.
   ctx.add(Slot, {
     at: "session.header",
     render: (input) => {
       const binding = () => bindingOf(input.session);
       return (
-        <ctx.ui.Button
-          size="small"
-          variant="ghost"
-          busy={binding()?.status === "starting"}
-          onClick={() => void open(input.session)}
-        >
-          <span
-            title={binding() ? ctx.t(`status.${binding()!.status}`) : undefined}
-            style={{
-              display: "inline-flex",
-              "align-items": "center",
-              gap: "6px",
-            }}
-          >
-            <MarimoLogo size={14} />
-            {binding() ? statusLabel(binding()!) : ctx.t("button.open")}
-            {binding() && (
+        <Show
+          when={binding()}
+          fallback={
+            <ctx.ui.Button
+              size="small"
+              variant="ghost"
+              onClick={() => void open(input.session)}
+            >
               <span
                 style={{
-                  width: "7px",
-                  height: "7px",
-                  "border-radius": "50%",
-                  background: DOT[binding()!.status],
-                  "box-shadow":
-                    binding()!.status === "running"
-                      ? `0 0 0 2px ${DOT.running}33`
-                      : "none",
+                  display: "inline-flex",
+                  "align-items": "center",
+                  gap: "6px",
                 }}
-              />
-            )}
-          </span>
-        </ctx.ui.Button>
+              >
+                <MarimoLogo size={14} />
+                {ctx.t("button.open")}
+              </span>
+            </ctx.ui.Button>
+          }
+        >
+          {(active) => (
+            <ctx.ui.Menu
+              label={statusLabel(active())}
+              trigger="button"
+              icon={active().status === "running" ? "status-active" : "flask"}
+              placement="bottom-end"
+              items={[
+                {
+                  label: ctx.t(
+                    active().status === "running"
+                      ? "pill.show"
+                      : "pill.startShow",
+                  ),
+                  icon: "globe",
+                  onSelect: () => void open(input.session),
+                },
+                {
+                  label: ctx.t("pill.pair"),
+                  icon: "link",
+                  onSelect: () => void pairAgent(input.session),
+                },
+                ...(active().status === "running"
+                  ? [
+                      {
+                        label: ctx.t("command.stop"),
+                        icon: "stop" as const,
+                        onSelect: () =>
+                          void api(input.session.server).stop(
+                            { id: input.session.id },
+                            at(input.session),
+                          ),
+                      },
+                    ]
+                  : []),
+                {
+                  label: ctx.t("command.unbind"),
+                  icon: "close" as const,
+                  onSelect: () =>
+                    void api(input.session.server).unbind(
+                      { id: input.session.id },
+                      at(input.session),
+                    ),
+                },
+              ]}
+            />
+          )}
+        </Show>
       );
     },
   });

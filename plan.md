@@ -8,7 +8,7 @@ The plugin's server half owns marimo, on whichever machine runs the OpenCode ser
 
 ```
 Desktop window (thin)                       OpenCode server (local sidecar or remote over SSH)
-  pill / header button / settings  ──RPC──▶  src/index.ts → src/server.ts manager
+  header control / settings        ──RPC──▶  src/index.ts → src/server.ts manager
   session.server.client.rpc(Marimo)  ◀─event─  bindings, ports, `marimo edit` processes, settings
   side pane: http://localhost:<port> ──pane proxy (tunnel.open)──▶ marimo on that machine
 ```
@@ -32,7 +32,7 @@ Facts this relies on, all checked:
 3. **`src/index.ts`**: on each setup, register the RPC handlers (delegating to the manager), the context hook (read the manager directly; skip if the text is already in `system`) and the `MARIMO_TOKEN` shell hook. `sessions.json` and `src/published.ts` go away.
 4. **`src/window.tsx`**: replace `ctx.main(Marimo)` with a per-server client: `server.client.rpc(Marimo)`, calls made with the session's directory as location.
    - State lives per server in a Solid store, loaded with `state()` and kept current with `events.on("changed")`. It resubscribes when a server's client changes (restart).
-   - If a server doesn't answer the RPC (plugin not installed there), the pill says so instead of failing.
+   - If a server doesn't answer the RPC (plugin not installed there), opening marimo from the header reports it instead of failing silently.
    - `show()` only falls back to the system browser for local sessions.
    - The settings page edits the local server's settings.
 5. **`src/gui.tsx`**: drop the `main` entry; delete `src/main.ts`.
@@ -52,4 +52,4 @@ Facts this relies on, all checked:
 - `bun run typecheck && bun run build`.
 - **Local:** an isolated `opencode serve` with this plugin; drive the RPC from a bun script: `notebooks` → `bind` (create) → `start` → the URL answers with the token → `stop` → `unbind`. Check `changed` events arrive.
 - **Remote:** the same script against exe-host's service over `ssh -L 49374`: notebook created in `/home/exedev`, marimo served on the remote machine, Studio mode starts through `uvx --with marimo-studio`.
-- **Desktop (needs you):** restart Desktop, open the marimo pill in an `exe-host` session. Pick `demo.py`; the side pane shows the remote notebook and the agent pairs with it.
+- **Desktop (needs you):** restart Desktop, open marimo from the session header in an `exe-host` session. Pick `demo.py`; the side pane shows the remote notebook and the agent pairs with it.

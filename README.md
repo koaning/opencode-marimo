@@ -55,12 +55,12 @@ reports, slides and papers from the notebook's results. With it on, notebooks st
 builds views. Studio is experimental, so you can pin a version (`0.4.1` or `marimo-studio==0.4.1`) in the field under
 the switch.
 
-A notebook with no editor open shuts down after 30 minutes, which frees its kernel; open it from the pill to start it
-again. Change the minutes on the same page (this one applies right away; `0` keeps notebooks running), or set `"idle"`
-in the plugin's `options`.
+A notebook with no editor open shuts down after 30 minutes, which frees its kernel; open it from the session-header
+menu to start it again. Change the minutes on the same page (this one applies right away; `0` keeps notebooks
+running), or set `"idle"` in the plugin's `options`.
 
-Changes apply the next time a notebook starts: stop it from the marimo pill and open it again. To turn Studio on
-before you ever open Settings, add `"studio": true` (or a version) to the plugin's `options`.
+Changes apply the next time a notebook starts: stop it from the session-header menu and open it again. To turn Studio
+on before you ever open Settings, add `"studio": true` (or a version) to the plugin's `options`.
 
 Deleting a session releases its notebook and port, so another session can take it. Archiving a session stops its
 notebook but keeps it bound.

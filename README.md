@@ -1,6 +1,6 @@
 # opencode-marimo
 
-Some small utilities to give every OpenCode session its own live [marimo](https://marimo.io) notebook. Think of it as [Claude Science](https://www.anthropic.com/news/claude-science-ai-workbench), but more open. 
+Some small utilities to give every OpenCode session its own live [marimo](https://marimo.io) notebook. It's somewhat inspired by what [Claude Science](https://www.anthropic.com/news/claude-science-ai-workbench) does, but *way* more open and customizable. 
 
 ![OpenCode chat on the left, the session's marimo notebook on the right](docs/images/session.png)
 
